@@ -1,60 +1,14 @@
-use std::any::Any;
-use std::cell::UnsafeCell;
-use std::mem::{self, ManuallyDrop, MaybeUninit};
-use std::ops::{Deref, DerefMut};
-use std::sync::Once;
-use std::thread;
+use std::{
+    any::Any,
+    mem::{self, ManuallyDrop},
+    ops::{Deref, DerefMut},
+    thread,
+};
 
-use crossbeam::channel;
+use crossbeam::channel::{self, Sender};
 
-struct OnceSlot<T> {
-    slot: UnsafeCell<MaybeUninit<T>>,
-    once: Once,
-}
-
-impl<T> OnceSlot<T> {
-    const fn new() -> Self {
-        OnceSlot {
-            slot: UnsafeCell::new(MaybeUninit::uninit()),
-            once: Once::new(),
-        }
-    }
-
-    fn get(&self, init: impl FnOnce() -> T) -> &T {
-        self.once.call_once(move || {
-            let value = init();
-
-            // Safety: our Once guarantees that this is the only existing
-            // mutable reference to this OnceCell. It also guarantees that this
-            // is the only write to the MaybeUninit.
-            unsafe {
-                (*self.slot.get()).as_mut_ptr().write(value);
-            }
-        });
-
-        // Safety: The only mutable access to this cell is in call_once,
-        // and the only way to reach this point is if it completed without
-        // panicking.
-        unsafe { &*(*self.slot.get()).as_ptr() }
-    }
-}
-
-impl<T> Drop for OnceSlot<T> {
-    fn drop(&mut self) {
-        // Safety: because we have &mut self, we know that this is the only
-        // reference to the cell. This means there's no possible
-        // synchronization errors (where another thread is evaluating Once
-        // while we're here in the destructor).
-        // The read is safe because MaybeUninit doesn't destruct its contents.
-        if self.once.is_completed() {
-            drop(unsafe { (*self.slot.get()).as_ptr().read() });
-        }
-    }
-}
-
-// Safety: our interface ensures that synchronized access to the inner T is
-// well-controlled
-unsafe impl<T: Sync> Sync for OnceSlot<T> {}
+mod once_slot;
+use once_slot::OnceSlot;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DeferDrop<T: Send + 'static> {
@@ -78,7 +32,7 @@ impl<T: Send + 'static> DeferDrop<T> {
 
 impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
-        static GARBAGE_CAN: OnceSlot<channel::Sender<Box<dyn Any + Send>>> = OnceSlot::new();
+        static GARBAGE_CAN: OnceSlot<Sender<Box<dyn Any + Send>>> = OnceSlot::new();
         let garbage_hole = GARBAGE_CAN.get(|| {
             let (sender, receiver) = channel::unbounded();
             // TODO: drops should ever panic, but if once does, we should
