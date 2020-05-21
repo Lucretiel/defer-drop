@@ -1,7 +1,7 @@
 //! A utility type that allows you to defer dropping your data to a background
 //! thread. See [`DeferDrop`] for details.
 //!
-//! Inspired by [https://abramov.io/rust-dropping-things-in-another-thread]
+//! Inspired by [https://abramov.io/rust-dropping-things-in-another-thread](https://abramov.io/rust-dropping-things-in-another-thread)
 
 use std::{
     any::Any,
@@ -24,14 +24,10 @@ use once_cell::sync::OnceCell;
 ///
 /// # Notes:
 ///
-/// Carefully consider whether this pattern is necessary in your use case.
+/// Carefully consider whether this pattern is necessary for your use case.
 /// Like all worker-thread abstractions, sending the value to a separate
 /// thread comes with its own costs, so it should only be done if performance
 /// profiling indicates that it's a performance gain.
-///
-/// There is no way to receive a signal indicating when a particular object
-/// was blocked; if you need such a thing, you should be dropping data in the
-/// foreground.
 ///
 /// There is only one global worker thread. Dropped values are enqueued in an
 /// unbounded channel to be consumed by this thread; if you produce more
@@ -45,10 +41,11 @@ use once_cell::sync::OnceCell;
 /// destructed in order. However, there is no guarantee about the ordering of
 /// interleaved values from different threads. Additionally, there are no
 /// guarantees about how long the values will be queued before being dropped,
-/// or even that they will be dropped at all. If your `main` thread
-/// terminates before all drops could be completed, they will be silently lost
-/// (as though via a [`mem::forget`]). This behavior is entirely up to your
-/// OS's thread scheduler.
+/// or even that they will be dropped at all. If your `main` thread terminates
+/// before all drops could be completed, they will be silently lost (as though
+/// via a [`mem::forget`]).This behavior is entirely up to your OS's thread
+/// scheduler. There is no way to receive a signal indicating when a particular
+/// object was dropped.
 ///
 /// # Example
 ///
@@ -80,7 +77,7 @@ pub struct DeferDrop<T: Send + 'static> {
 }
 
 impl<T: Send + 'static> DeferDrop<T> {
-    /// Create a new `DeferDrop` value
+    /// Create a new `DeferDrop` value.
     #[inline]
     pub fn new(value: T) -> Self {
         DeferDrop {
@@ -165,8 +162,8 @@ mod tests {
 
     #[test]
     fn test() {
-        /// This struct, when destructed, reports the thread ID of its
-        /// destructor to the channel
+        /// This struct, when dropped, reports the thread ID of its dropping
+        /// thread to the channel
         struct ThreadReporter {
             chan: channel::Sender<thread::ThreadId>,
         }
@@ -186,11 +183,11 @@ mod tests {
         match receiver.recv_timeout(Duration::from_secs(1)) {
             Ok(id) => assert_ne!(
                 id, this_thread_id,
-                "thing wasn't destructed in a different thread"
+                "thing wasn't dropped in a different thread"
             ),
             Err(_) => assert!(
                 false,
-                "thing wasn't destructed within one second of being dropped"
+                "thing wasn't dropped within one second of being dropped"
             ),
         }
     }
