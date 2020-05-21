@@ -108,7 +108,7 @@ impl<T: Send + 'static> Drop for DeferDrop<T> {
             let (sender, receiver) = channel::unbounded();
             // TODO: drops should ever panic, but if once does, we should
             // probably abort the process
-            let _ = thread::spawn(move || receiver.into_iter().for_each(|thing| drop(thing)));
+            let _ = thread::spawn(move || receiver.into_iter().for_each(drop));
             sender
         });
 
