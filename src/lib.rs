@@ -1,3 +1,8 @@
+//! A utility type that allows you to defer dropping your data to a background
+//! thread. See [`DeferDrop`] for details.
+//!
+//! Inspired by [https://abramov.io/rust-dropping-things-in-another-thread]
+
 use std::{
     any::Any,
     mem::{self, ManuallyDrop},
@@ -10,12 +15,74 @@ use crossbeam::channel::{self, Sender};
 mod once_slot;
 use once_slot::OnceSlot;
 
+/// Wrapper type that, when dropped, sends the inner value to a global
+/// background thread to be dropped. Useful in cases where a value takes a
+/// long time to drop (for instance, a windows file that might block on close,
+/// or a large data structure that has to extensively recursively trawl
+/// itself).
+///
+/// `DeferDrop` implements `Deref` and `DerefMut`, meaning it can be
+/// dereferenced and freely used like a container around its inner type.
+///
+/// # Notes:
+///
+/// Carefully consider whether this pattern is necessary in your use case.
+/// Like all worker-thread abstractions, sending the value to a separate
+/// thread comes with its own costs, so it should only be done if performance
+/// profiling indicates that it's a performance gain.
+///
+/// There is no way to receive a signal indicating when a particular object
+/// was blocked; if you need such a thing, you should be dropping data in the
+/// foreground.
+///
+/// There is only one global worker thread. Dropped values are enqueued in an
+/// unbounded channel to be consumed by this thread; if you produce more
+/// garbage than the thread can handle, this will cause unbounded memory
+/// consumption. There is currently no way for the thread to signal or block
+/// if it is overwhelmed.
+///
+/// All of the standard non-determinism threading caveats apply here. The
+/// objects are guaranteed to be destructed in the order received through a
+/// channel, which means that objects sent from a single thread will be
+/// destructed in order. However, there is no guarantee about the ordering of
+/// interleaved values from different threads. Additionally, there are no
+/// guarantees about how long the values will be queued before being dropped,
+/// or even that they will be dropped at all. If your `main` thread
+/// terminates before all drops could be completed, they will be silently lost
+/// (as though via a [`mem::forget`]). This behavior is entirely up to your
+/// OS's thread scheduler.
+///
+/// # Example
+///
+/// ```
+/// use defer_drop::DeferDrop;
+/// use std::time::{Instant, Duration};
+///
+/// let massive_vec: Vec<Vec<i32>> = (0..1000000)
+///     .map(|_| vec![1, 2, 3])
+///     .collect();
+///
+/// let deferred = DeferDrop::new(massive_vec.clone());
+///
+/// fn timer(f: impl FnOnce()) -> Duration {
+///     let start = Instant::now();
+///     f();
+///     Instant::now() - start
+/// }
+///
+/// let drop1 = timer(move || drop(massive_vec));
+/// let drop2 = timer(move || drop(deferred));
+///
+/// assert!(drop2 < drop1);
+/// ```
+#[repr(transparent)]
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DeferDrop<T: Send + 'static> {
     inner: ManuallyDrop<T>,
 }
 
 impl<T: Send + 'static> DeferDrop<T> {
+    /// Create a new `DeferDrop` value
     #[inline]
     pub fn new(value: T) -> Self {
         DeferDrop {
@@ -23,6 +90,9 @@ impl<T: Send + 'static> DeferDrop<T> {
         }
     }
 
+    /// Unwrap the `DeferDrop`, returning the inner value. This has the effect
+    /// of cancelling the deferred drop behavior; ownership of the inner value
+    /// is transferred to the caller.
     pub fn into_inner(mut this: Self) -> T {
         let value = unsafe { ManuallyDrop::take(&mut this.inner) };
         mem::forget(this);
