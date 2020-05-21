@@ -30,10 +30,11 @@ impl<T: Send + 'static> DeferDrop<T> {
     }
 }
 
+static GARBAGE_CAN: OnceSlot<Sender<Box<dyn Any + Send>>> = OnceSlot::new();
+
 impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
-        static GARBAGE_CAN: OnceSlot<Sender<Box<dyn Any + Send>>> = OnceSlot::new();
-        let garbage_hole = GARBAGE_CAN.get(|| {
+        let garbage_can = GARBAGE_CAN.get(|| {
             let (sender, receiver) = channel::unbounded();
             // TODO: drops should ever panic, but if once does, we should
             // probably abort the process
@@ -45,7 +46,7 @@ impl<T: Send + 'static> Drop for DeferDrop<T> {
         let boxed = Box::new(value);
 
         // This unwrap only panics if the GARBAGE_CAN thread panicked
-        garbage_hole.send(boxed).unwrap();
+        garbage_can.send(boxed).unwrap();
     }
 }
 
@@ -83,5 +84,46 @@ impl<T: Send + 'static> DerefMut for DeferDrop<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossbeam::channel;
+    use std::thread;
+    use std::time::Duration;
+
+    use crate::DeferDrop;
+
+    #[test]
+    fn test() {
+        /// This struct, when destructed, reports the thread ID of its
+        /// destructor to the channel
+        struct ThreadReporter {
+            chan: channel::Sender<thread::ThreadId>,
+        }
+
+        impl Drop for ThreadReporter {
+            fn drop(&mut self) {
+                self.chan.send(thread::current().id()).unwrap();
+            }
+        }
+
+        let (sender, receiver) = channel::bounded(1);
+        let this_thread_id = thread::current().id();
+
+        let thing = DeferDrop::new(ThreadReporter { chan: sender });
+        drop(thing);
+
+        match receiver.recv_timeout(Duration::from_secs(1)) {
+            Ok(id) => assert_ne!(
+                id, this_thread_id,
+                "thing wasn't destructed in a different thread"
+            ),
+            Err(_) => assert!(
+                false,
+                "thing wasn't destructed within one second of being dropped"
+            ),
+        }
     }
 }
