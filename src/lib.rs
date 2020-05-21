@@ -10,7 +10,7 @@ use std::{
     thread,
 };
 
-use crossbeam::channel::{self, Sender};
+use crossbeam_channel::Sender;
 use once_cell::sync::OnceCell;
 
 /// Wrapper type that, when dropped, sends the inner value to a global
@@ -103,7 +103,7 @@ static GARBAGE_CAN: OnceCell<Sender<Box<dyn Any + Send>>> = OnceCell::new();
 impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
         let garbage_can = GARBAGE_CAN.get_or_init(|| {
-            let (sender, receiver) = channel::unbounded();
+            let (sender, receiver) = crossbeam_channel::unbounded();
             // TODO: drops should ever panic, but if once does, we should
             // probably abort the process
             let _ = thread::spawn(move || receiver.into_iter().for_each(drop));
@@ -157,7 +157,6 @@ impl<T: Send + 'static> DerefMut for DeferDrop<T> {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam::channel;
     use std::thread;
     use std::time::Duration;
 
@@ -168,7 +167,7 @@ mod tests {
         /// This struct, when destructed, reports the thread ID of its
         /// destructor to the channel
         struct ThreadReporter {
-            chan: channel::Sender<thread::ThreadId>,
+            chan: crossbeam_channel::Sender<thread::ThreadId>,
         }
 
         impl Drop for ThreadReporter {
@@ -177,7 +176,7 @@ mod tests {
             }
         }
 
-        let (sender, receiver) = channel::bounded(1);
+        let (sender, receiver) = crossbeam_channel::bounded(1);
         let this_thread_id = thread::current().id();
 
         let thing = DeferDrop::new(ThreadReporter { chan: sender });
