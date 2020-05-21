@@ -12,3 +12,4 @@ license = "MPL-2.0"
 
 [dependencies]
 crossbeam = "0.7.3"
+once_cell = "1.4.0"

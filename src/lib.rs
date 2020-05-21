@@ -11,9 +11,7 @@ use std::{
 };
 
 use crossbeam::channel::{self, Sender};
-
-mod once_slot;
-use once_slot::OnceSlot;
+use once_cell::sync::OnceCell;
 
 /// Wrapper type that, when dropped, sends the inner value to a global
 /// background thread to be dropped. Useful in cases where a value takes a
@@ -100,11 +98,11 @@ impl<T: Send + 'static> DeferDrop<T> {
     }
 }
 
-static GARBAGE_CAN: OnceSlot<Sender<Box<dyn Any + Send>>> = OnceSlot::new();
+static GARBAGE_CAN: OnceCell<Sender<Box<dyn Any + Send>>> = OnceCell::new();
 
 impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
-        let garbage_can = GARBAGE_CAN.get(|| {
+        let garbage_can = GARBAGE_CAN.get_or_init(|| {
             let (sender, receiver) = channel::unbounded();
             // TODO: drops should ever panic, but if once does, we should
             // probably abort the process
