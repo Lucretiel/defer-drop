@@ -10,7 +10,7 @@ use std::{
     thread,
 };
 
-use crossbeam::channel::{self, Sender};
+use crossbeam_channel::{self as channel, Sender};
 use once_cell::sync::OnceCell;
 
 /// Wrapper type that, when dropped, sends the inner value to a global
@@ -157,7 +157,7 @@ impl<T: Send + 'static> DerefMut for DeferDrop<T> {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam::channel;
+    use crossbeam_channel as channel;
     use std::thread;
     use std::time::Duration;
 
