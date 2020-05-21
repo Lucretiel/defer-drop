@@ -101,7 +101,7 @@ impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
         let garbage_can = GARBAGE_CAN.get_or_init(|| {
             let (sender, receiver) = channel::unbounded();
-            // TODO: drops should ever panic, but if once does, we should
+            // TODO: drops should never panic, but if once does, we should
             // probably abort the process
             let _ = thread::spawn(move || receiver.into_iter().for_each(drop));
             sender
