@@ -52,9 +52,10 @@ use once_cell::sync::OnceCell;
 /// ```
 /// use defer_drop::DeferDrop;
 /// use std::time::{Instant, Duration};
+/// use std::iter::repeat_with;
 ///
-/// let massive_vec: Vec<Vec<i32>> = (0..1000000)
-///     .map(|_| vec![1, 2, 3])
+/// let massive_vec: Vec<Vec<i32>> = repeat_with(|| vec![1, 2, 3])
+///     .take(1_000_000)
 ///     .collect();
 ///
 /// let deferred = DeferDrop::new(massive_vec.clone());
