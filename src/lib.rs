@@ -43,7 +43,7 @@ use once_cell::sync::OnceCell;
 /// guarantees about how long the values will be queued before being dropped,
 /// or even that they will be dropped at all. If your `main` thread terminates
 /// before all drops could be completed, they will be silently lost (as though
-/// via a [`mem::forget`]).This behavior is entirely up to your OS's thread
+/// via a [`mem::forget`]). This behavior is entirely up to your OS's thread
 /// scheduler. There is no way to receive a signal indicating when a particular
 /// object was dropped.
 ///
@@ -102,7 +102,7 @@ impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
         let garbage_can = GARBAGE_CAN.get_or_init(|| {
             let (sender, receiver) = channel::unbounded();
-            // TODO: drops should never panic, but if once does, we should
+            // TODO: drops should never panic, but if one does, we should
             // probably abort the process
             let _ = thread::spawn(move || receiver.into_iter().for_each(drop));
             sender
