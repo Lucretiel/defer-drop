@@ -4,7 +4,6 @@
 //! Inspired by [https://abramov.io/rust-dropping-things-in-another-thread](https://abramov.io/rust-dropping-things-in-another-thread)
 
 use std::{
-    any::Any,
     mem::{self, ManuallyDrop},
     ops::{Deref, DerefMut},
     thread,
@@ -96,7 +95,7 @@ impl<T: Send + 'static> DeferDrop<T> {
     }
 }
 
-static GARBAGE_CAN: OnceCell<Sender<Box<dyn Any + Send>>> = OnceCell::new();
+static GARBAGE_CAN: OnceCell<Sender<Box<dyn Send>>> = OnceCell::new();
 
 impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
