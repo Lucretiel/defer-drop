@@ -6,7 +6,7 @@
 use std::{
     mem::{self, ManuallyDrop},
     ops::{Deref, DerefMut},
-    thread,
+    thread::{self, JoinHandle},
 };
 
 use crossbeam_channel::{self as channel, Sender};
@@ -95,23 +95,13 @@ impl<T: Send + 'static> DeferDrop<T> {
     }
 }
 
-static GARBAGE_CAN: OnceCell<Sender<Box<dyn Send>>> = OnceCell::new();
+static GARBAGE_CAN: OnceCell<GarbageCan> = OnceCell::new();
 
 impl<T: Send + 'static> Drop for DeferDrop<T> {
     fn drop(&mut self) {
-        let garbage_can = GARBAGE_CAN.get_or_init(|| {
-            let (sender, receiver) = channel::unbounded();
-            // TODO: drops should never panic, but if one does, we should
-            // probably abort the process
-            let _ = thread::spawn(move || receiver.into_iter().for_each(drop));
-            sender
-        });
-
-        let value = unsafe { ManuallyDrop::take(&mut self.inner) };
-        let boxed = Box::new(value);
-
-        // This unwrap only panics if the GARBAGE_CAN thread panicked
-        garbage_can.send(boxed).unwrap();
+        GARBAGE_CAN
+            .get_or_init(|| GarbageCan::new("defer-drop background thread".to_owned()))
+            .throw_away(unsafe { ManuallyDrop::take(&mut self.inner) });
     }
 }
 
@@ -152,11 +142,43 @@ impl<T: Send + 'static> DerefMut for DeferDrop<T> {
     }
 }
 
+struct GarbageCan {
+    sender: Sender<Box<dyn Send>>,
+    handle: JoinHandle<()>,
+}
+
+impl GarbageCan {
+    fn new(name: String) -> Self {
+        let (sender, receiver) = channel::unbounded();
+
+        // TODO: drops should never panic, but if one does, we should
+        // probably abort the process
+        let handle = thread::Builder::new()
+            .name(name)
+            .spawn(move || receiver.into_iter().for_each(drop))
+            .expect("failed to spawn defer-drop background thread");
+
+        Self { sender, handle }
+    }
+
+    fn throw_away<T: Send + 'static>(&self, value: T) {
+        // Only send to the garbage can if we're not currently in the garbage
+        // can; if we are, just drop it eagerly.
+        if thread::current().id() != self.handle.thread().id() {
+            let boxed = Box::new(value);
+            self.sender.send(boxed).unwrap();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossbeam_channel as channel;
-    use std::thread;
-    use std::time::Duration;
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+        time::Duration,
+    };
 
     use crate::DeferDrop;
 
@@ -185,10 +207,80 @@ mod tests {
                 id, this_thread_id,
                 "thing wasn't dropped in a different thread"
             ),
-            Err(_) => assert!(
-                false,
-                "thing wasn't dropped within one second of being dropped"
-            ),
+            Err(_) => panic!("thing wasn't dropped within one second of being dropped"),
         }
+    }
+
+    // Test that `DeferDrop` values that are sent into the dropper thread are
+    // dropped locally (that is, they don't re-send into the channel)
+    #[test]
+    fn test_no_recursive_send() {
+        #[allow(dead_code)]
+        struct DropOrderRecorder<T> {
+            id: u32,
+            value: T,
+            record: Arc<Mutex<Vec<u32>>>,
+        }
+
+        impl<T> Drop for DropOrderRecorder<T> {
+            fn drop(&mut self) {
+                self.record.lock().unwrap().push(self.id)
+            }
+        }
+
+        let drop_order_record: Arc<Mutex<Vec<u32>>> = Default::default();
+
+        let value = DeferDrop::new(DropOrderRecorder {
+            id: 0,
+            record: drop_order_record.clone(),
+            value: [
+                DeferDrop::new(DropOrderRecorder {
+                    id: 1,
+                    record: drop_order_record.clone(),
+                    value: [
+                        DeferDrop::new(DropOrderRecorder {
+                            id: 2,
+                            record: drop_order_record.clone(),
+                            value: (),
+                        }),
+                        DeferDrop::new(DropOrderRecorder {
+                            id: 3,
+                            record: drop_order_record.clone(),
+                            value: (),
+                        }),
+                    ],
+                }),
+                DeferDrop::new(DropOrderRecorder {
+                    id: 4,
+                    record: drop_order_record.clone(),
+                    value: [
+                        DeferDrop::new(DropOrderRecorder {
+                            id: 5,
+                            record: drop_order_record.clone(),
+                            value: (),
+                        }),
+                        DeferDrop::new(DropOrderRecorder {
+                            id: 6,
+                            record: drop_order_record.clone(),
+                            value: (),
+                        }),
+                    ],
+                }),
+            ],
+        });
+
+        drop(value);
+
+        loop {
+            thread::yield_now();
+            let lock = drop_order_record.lock().unwrap();
+            if lock.len() >= 7 {
+                break;
+            }
+        }
+
+        let lock = drop_order_record.lock().unwrap();
+
+        assert_eq!(lock.as_slice(), [0, 1, 2, 3, 4, 5, 6])
     }
 }

@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## 1.1.0
+
+### Changed
+
+- `DeferDrop` no longer sends its value to the background thread if it's already in the background thread (that is, if you manage to send a `DeferDrop` value to the background thread, the inner value will be dropped eagerly, rather than being sent through the channel, since it's already in the background thread.)
 
 ## 1.0.1
 
