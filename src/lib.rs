@@ -1,7 +1,14 @@
-//! A utility type that allows you to defer dropping your data to a background
-//! thread. See [`DeferDrop`] for details.
-//!
-//! Inspired by [https://abramov.io/rust-dropping-things-in-another-thread](https://abramov.io/rust-dropping-things-in-another-thread)
+/*!
+A utility type that allows you to defer dropping your data to a background
+thread. See [`DeferDrop`] for details.
+
+Inspired by [https://abramov.io/rust-dropping-things-in-another-thread](https://abramov.io/rust-dropping-things-in-another-thread)
+
+# Features
+
+- `serde`: when enabled, adds a [`Serialize`] and [`Deserialize`]
+  implementation to [`DeferDrop`]
+*/
 
 use std::{
     mem::{self, ManuallyDrop},
@@ -11,6 +18,9 @@ use std::{
 
 use crossbeam_channel::{self as channel, Sender};
 use once_cell::sync::OnceCell;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Wrapper type that, when dropped, sends the inner value to a global
 /// background thread to be dropped. Useful in cases where a value takes a
@@ -139,6 +149,26 @@ impl<T: Send + 'static> DerefMut for DeferDrop<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T: Serialize + Send + 'static> Serialize for DeferDrop<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.as_ref().serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T: Deserialize<'de> + Send + 'static> Deserialize<'de> for DeferDrop<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(Self::new)
     }
 }
 
